@@ -38,11 +38,22 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/users', async (req, res) => {
+      const cursor = usersCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
     //Reviews Related APIs
 
     app.post('/reviews', async (req, res) => {
       const review = req.body;
       const result = await reviewsCollection.insertOne(review);
+      res.send(result);
+    });
+    app.get('/reviews', async (req, res) => {
+      const cursor = reviewsCollection.find();
+      const result = await cursor.toArray();
       res.send(result);
     });
 
