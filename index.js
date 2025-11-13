@@ -35,38 +35,21 @@ const verifyFireBaseToken = async (req, res, next) => {
 };
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.636pevp.mongodb.net/?appName=Cluster0`;
-let client;
-let isConnected = false;
-
-async function connectToDatabase() {
-  if (isConnected) {
-    return;
-  }
-
-  try {
-    client = new MongoClient(uri, {
-      serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-      },
-    });
-    await client.connect();
-    isConnected = true;
-    console.log('Connected to MongoDB');
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    throw error;
-  }
-}
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
+});
 
 app.get('/', (req, res) => {
   res.send('FoodieSpace server is running');
 });
 
-async function setupRoutes() {
+async function run() {
   try {
-    await connectToDatabase();
+    await client.connect();
 
     const database = client.db('foodieSpaceDB');
     const usersCollection = database.collection('users');
@@ -271,26 +254,11 @@ async function setupRoutes() {
     });
 
     console.log('Pinged your deployment. You successfully connected to MongoDB!');
-  } catch (error) {
-    console.error('Error setting up routes:', error);
+  } finally {
   }
 }
+run().catch(console.dir);
 
-// Initialize routes on first request for Vercel
-let routesInitialized = false;
-app.use(async (req, res, next) => {
-  if (!routesInitialized) {
-    await setupRoutes();
-    routesInitialized = true;
-  }
-  next();
+app.listen(port, () => {
+  console.log(`Smart server is running on port: ${port}`);
 });
-
-// Only listen locally, not on Vercel
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(port, () => {
-    console.log(`Smart server is running on port: ${port}`);
-  });
-}
-
-module.exports = app;
