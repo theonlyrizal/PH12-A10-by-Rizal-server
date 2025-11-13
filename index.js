@@ -42,7 +42,7 @@ async function connectToDatabase() {
   if (isConnected) {
     return;
   }
-  
+
   try {
     client = new MongoClient(uri, {
       serverApi: {
