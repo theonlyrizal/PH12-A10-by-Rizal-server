@@ -49,7 +49,7 @@ app.get('/', (req, res) => {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const database = client.db('foodieSpaceDB');
     const usersCollection = database.collection('users');
@@ -111,6 +111,8 @@ async function run() {
     app.get('/reviews', async (req, res) => {
       const cursor = reviewsCollection.find();
       const result = await cursor.toArray();
+      console.log(result);
+      
       res.send(result);
     });
 
