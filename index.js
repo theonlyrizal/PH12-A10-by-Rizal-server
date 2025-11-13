@@ -85,17 +85,156 @@ async function run() {
     //Reviews Related APIs -----------------------------------
 
     //       Create
-    app.post('/reviews', async (req, res) => {
+    app.post('/reviews', verifyFireBaseToken, async (req, res) => {
+      const userEmail = req.token_email;
       const review = req.body;
+
+      // Validate that submitted email matches token email
+      if (review.userEmail !== userEmail) {
+        return res.status(403).send({ message: 'Email mismatch with token' });
+      }
+
       const result = await reviewsCollection.insertOne(review);
       res.send(result);
     });
 
-    //       Retrieve
+    //       Retrieve user's own reviews (MUST come before generic /reviews route)
+    app.get('/reviews/my-reviews', verifyFireBaseToken, async (req, res) => {
+      const userEmail = req.token_email;
+      const query = { userEmail: userEmail };
+      const cursor = reviewsCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    //       Retrieve all reviews
     app.get('/reviews', async (req, res) => {
       const cursor = reviewsCollection.find();
       const result = await cursor.toArray();
       res.send(result);
+    });
+
+    //       Search reviews by food name (MUST come before /reviews/:id)
+    app.get('/reviews/search', async (req, res) => {
+      const { q } = req.query;
+
+      if (!q) {
+        return res.status(400).send({ message: 'Search query required' });
+      }
+
+      try {
+        const cursor = reviewsCollection.find({
+          foodName: { $regex: q, $options: 'i' },
+        });
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(400).send({ message: 'Search failed' });
+      }
+    });
+
+    //       Get single review by ID
+    app.get('/reviews/:id', async (req, res) => {
+      const { id } = req.params;
+      const { ObjectId } = require('mongodb');
+      try {
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(id) });
+        if (!review) {
+          return res.status(404).send({ message: 'Review not found' });
+        }
+        res.send(review);
+      } catch (error) {
+        res.status(400).send({ message: 'Invalid review ID' });
+      }
+    });
+
+    //       Update review (only by owner)
+    app.put('/reviews/:id', verifyFireBaseToken, async (req, res) => {
+      const { id } = req.params;
+      const { ObjectId } = require('mongodb');
+      const userEmail = req.token_email;
+
+      try {
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!review) {
+          return res.status(404).send({ message: 'Review not found' });
+        }
+
+        if (review.userEmail !== userEmail) {
+          return res.status(403).send({ message: 'You can only edit your own reviews' });
+        }
+
+        const updatedReview = req.body;
+        const result = await reviewsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updatedReview }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(400).send({ message: 'Invalid request' });
+      }
+    });
+
+    //       Delete review (only by owner)
+    app.delete('/reviews/:id', verifyFireBaseToken, async (req, res) => {
+      const { id } = req.params;
+      const { ObjectId } = require('mongodb');
+      const userEmail = req.token_email;
+
+      try {
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!review) {
+          return res.status(404).send({ message: 'Review not found' });
+        }
+
+        if (review.userEmail !== userEmail) {
+          return res.status(403).send({ message: 'You can only delete your own reviews' });
+        }
+
+        const result = await reviewsCollection.deleteOne({ _id: new ObjectId(id) });
+        res.send(result);
+      } catch (error) {
+        res.status(400).send({ message: 'Invalid request' });
+      }
+    });
+
+    //       Toggle favorite (add/remove user from isFavoriteBy array)
+    app.patch('/reviews/:id/favorite', verifyFireBaseToken, async (req, res) => {
+      const { id } = req.params;
+      const { ObjectId } = require('mongodb');
+      const userEmail = req.token_email;
+
+      try {
+        const review = await reviewsCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!review) {
+          return res.status(404).send({ message: 'Review not found' });
+        }
+
+        const isFavorite = review.isFavoriteBy?.includes(userEmail);
+
+        let result;
+        if (isFavorite) {
+          // Remove from favorites
+          result = await reviewsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $pull: { isFavoriteBy: userEmail } }
+          );
+        } else {
+          // Add to favorites
+          result = await reviewsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $push: { isFavoriteBy: userEmail } }
+          );
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.status(400).send({ message: 'Invalid request' });
+      }
     });
 
     console.log('Pinged your deployment. You successfully connected to MongoDB!');
