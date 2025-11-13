@@ -202,13 +202,15 @@ async function run() {
     });
 
     //       Toggle favorite (add/remove user from isFavoriteBy array)
+    //       Also update user's `favorites` array with the review _id
     app.patch('/reviews/:id/favorite', verifyFireBaseToken, async (req, res) => {
       const { id } = req.params;
       const { ObjectId } = require('mongodb');
       const userEmail = req.token_email;
 
       try {
-        const review = await reviewsCollection.findOne({ _id: new ObjectId(id) });
+        const reviewId = new ObjectId(id);
+        const review = await reviewsCollection.findOne({ _id: reviewId });
 
         if (!review) {
           return res.status(404).send({ message: 'Review not found' });
@@ -216,23 +218,37 @@ async function run() {
 
         const isFavorite = review.isFavoriteBy?.includes(userEmail);
 
-        let result;
+        let reviewResult;
+        let userResult;
+
         if (isFavorite) {
-          // Remove from favorites
-          result = await reviewsCollection.updateOne(
-            { _id: new ObjectId(id) },
+          // Remove from review's favorites and from user's favorites
+          reviewResult = await reviewsCollection.updateOne(
+            { _id: reviewId },
             { $pull: { isFavoriteBy: userEmail } }
           );
+
+          userResult = await usersCollection.updateOne(
+            { email: userEmail },
+            { $pull: { favorites: reviewId } }
+          );
         } else {
-          // Add to favorites
-          result = await reviewsCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $push: { isFavoriteBy: userEmail } }
+          // Add to review's favorites and to user's favorites
+          reviewResult = await reviewsCollection.updateOne(
+            { _id: reviewId },
+            { $addToSet: { isFavoriteBy: userEmail } }
+          );
+
+          userResult = await usersCollection.updateOne(
+            { email: userEmail },
+            { $addToSet: { favorites: reviewId } },
+            { upsert: false }
           );
         }
 
-        res.send(result);
+        res.send({ reviewResult, userResult });
       } catch (error) {
+        console.error('Favorite toggle error:', error);
         res.status(400).send({ message: 'Invalid request' });
       }
     });
