@@ -1,3 +1,4 @@
 node_modules
 .env
 foodiespace-firebase-adminsdk.json
+.vercel

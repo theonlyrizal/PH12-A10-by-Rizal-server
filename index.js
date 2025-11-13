@@ -7,8 +7,8 @@ const port = process.env.PORT || 5050;
 const admin = require('firebase-admin');
 
 // ADMIN SDK
-const serviceAccount = require('./foodiespace-firebase-adminsdk.json');
-
+const decoded = Buffer.from(process.env.FIREBASE_SERVICE_KEY, 'base64').toString('utf8');
+const serviceAccount = JSON.parse(decoded);
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -44,7 +44,7 @@ const client = new MongoClient(uri, {
 });
 
 app.get('/', (req, res) => {
-  res.send('Smart server is running');
+  res.send('FoodieSpace server is running');
 });
 
 async function run() {
@@ -76,11 +76,11 @@ async function run() {
     });
 
     //       Retrieve
-    app.get('/users', async (req, res) => {
-      const cursor = usersCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
-    });
+    // app.get('/users', async (req, res) => {
+    //   const cursor = usersCollection.find();
+    //   const result = await cursor.toArray();
+    //   res.send(result);
+    // });
 
     //Reviews Related APIs -----------------------------------
 
