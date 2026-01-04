@@ -75,6 +75,41 @@ async function run() {
       }
     });
 
+    //       Update user profile (display name and photo URL)
+    app.patch('/users/profile', verifyFireBaseToken, async (req, res) => {
+      const userEmail = req.token_email;
+      const { displayName, photoURL } = req.body;
+
+      try {
+        // Update Firebase Auth profile
+        const userRecord = await admin.auth().getUserByEmail(userEmail);
+        await admin.auth().updateUser(userRecord.uid, {
+          displayName: displayName,
+          photoURL: photoURL,
+        });
+
+        // Update MongoDB user record
+        const result = await usersCollection.updateOne(
+          { email: userEmail },
+          {
+            $set: {
+              name: displayName,
+              photoURL: photoURL,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        res.send({
+          message: 'Profile updated successfully',
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (error) {
+        console.error('Profile update error:', error);
+        res.status(500).send({ message: 'Failed to update profile', error: error.message });
+      }
+    });
+
     //       Retrieve
     // app.get('/users', async (req, res) => {
     //   const cursor = usersCollection.find();
