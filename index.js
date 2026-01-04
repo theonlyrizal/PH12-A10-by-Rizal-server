@@ -34,6 +34,25 @@ const verifyFireBaseToken = async (req, res, next) => {
   }
 };
 
+// Admin verification middleware
+const verifyAdmin = async (req, res, next) => {
+  const email = req.token_email;
+
+  try {
+    const database = req.app.locals.database;
+    const usersCollection = database.collection('users');
+    const user = await usersCollection.findOne({ email: email });
+
+    if (!user || user.role !== 'admin') {
+      return res.status(403).send({ message: 'Forbidden: Admin access required' });
+    }
+
+    next();
+  } catch (error) {
+    return res.status(500).send({ message: 'Error verifying admin status' });
+  }
+};
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.636pevp.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
@@ -55,6 +74,9 @@ async function run() {
     const usersCollection = database.collection('users');
     const reviewsCollection = database.collection('reviews');
 
+    // Make database available to middleware
+    app.locals.database = database;
+
     //Users related APIs ------------------------------
 
     //       Create
@@ -70,8 +92,81 @@ async function run() {
       if (userExists) {
         res.send({ message: 'User already exists' });
       } else {
+        // Set default role as 'user' if not provided
+        if (!newUser.role) {
+          newUser.role = 'user';
+        }
         const result = await usersCollection.insertOne(newUser);
         res.send(result);
+      }
+    });
+
+    //       Get user by email (for fetching role)
+    app.get('/users/:email', verifyFireBaseToken, async (req, res) => {
+      const email = req.params.email;
+
+      // Users can only fetch their own data unless they're admin
+      if (req.token_email !== email) {
+        const requestingUser = await usersCollection.findOne({ email: req.token_email });
+        if (!requestingUser || requestingUser.role !== 'admin') {
+          return res.status(403).send({ message: 'Forbidden' });
+        }
+      }
+
+      try {
+        const user = await usersCollection.findOne({ email: email });
+        if (!user) {
+          return res.status(404).send({ message: 'User not found' });
+        }
+        res.send(user);
+      } catch (error) {
+        res.status(500).send({ message: 'Error fetching user' });
+      }
+    });
+
+    //       Update user role (admin only)
+    app.patch('/users/:email/role', verifyFireBaseToken, verifyAdmin, async (req, res) => {
+      const email = req.params.email;
+      const { role } = req.body;
+      const adminEmail = req.token_email;
+
+      if (!['user', 'admin'].includes(role)) {
+        return res.status(400).send({ message: 'Invalid role. Must be user or admin' });
+      }
+
+      // Prevent admin from changing their own role
+      if (email === adminEmail) {
+        return res.status(403).send({ message: 'You cannot change your own role' });
+      }
+
+      try {
+        // Check if this is the last admin being demoted
+        const targetUser = await usersCollection.findOne({ email: email });
+        if (!targetUser) {
+          return res.status(404).send({ message: 'User not found' });
+        }
+
+        if (targetUser.role === 'admin' && role !== 'admin') {
+          // Count total admins
+          const adminCount = await usersCollection.countDocuments({ role: 'admin' });
+          if (adminCount <= 1) {
+            return res
+              .status(403)
+              .send({ message: 'Cannot demote the last admin. At least one admin must remain.' });
+          }
+        }
+
+        const result = await usersCollection.updateOne(
+          { email: email },
+          { $set: { role: role, updatedAt: new Date() } }
+        );
+
+        res.send({
+          message: 'User role updated successfully',
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (error) {
+        res.status(500).send({ message: 'Error updating user role' });
       }
     });
 
@@ -110,12 +205,16 @@ async function run() {
       }
     });
 
-    //       Retrieve
-    // app.get('/users', async (req, res) => {
-    //   const cursor = usersCollection.find();
-    //   const result = await cursor.toArray();
-    //   res.send(result);
-    // });
+    //       Retrieve all users (Admin only)
+    app.get('/users', verifyFireBaseToken, verifyAdmin, async (req, res) => {
+      try {
+        const cursor = usersCollection.find();
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: 'Error fetching users' });
+      }
+    });
 
     //Reviews Related APIs -----------------------------------
 
@@ -128,6 +227,10 @@ async function run() {
       if (review.userEmail !== userEmail) {
         return res.status(403).send({ message: 'Email mismatch with token' });
       }
+
+      // Set status to pending by default
+      review.status = 'pending';
+      review.createdAt = new Date();
 
       const result = await reviewsCollection.insertOne(review);
       res.send(result);
@@ -142,12 +245,13 @@ async function run() {
       res.send(result);
     });
 
-    //       Retrieve all reviews
+    //       Retrieve all reviews (only approved ones for public)
     app.get('/reviews', async (req, res) => {
-      const cursor = reviewsCollection.find();
+      // Only show approved reviews to public
+      const cursor = reviewsCollection.find({ status: 'approved' });
       const result = await cursor.toArray();
       console.log(result);
-      
+
       res.send(result);
     });
 
@@ -162,11 +266,64 @@ async function run() {
       try {
         const cursor = reviewsCollection.find({
           foodName: { $regex: q, $options: 'i' },
+          status: 'approved', // Only search approved reviews
         });
         const result = await cursor.toArray();
         res.send(result);
       } catch (error) {
         res.status(400).send({ message: 'Search failed' });
+      }
+    });
+
+    //       Get all pending reviews (Admin only)
+    app.get('/reviews/pending', verifyFireBaseToken, verifyAdmin, async (req, res) => {
+      try {
+        const cursor = reviewsCollection.find({ status: 'pending' });
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: 'Error fetching pending reviews' });
+      }
+    });
+
+    //       Get all reviews with any status (Admin only)
+    app.get('/reviews/all', verifyFireBaseToken, verifyAdmin, async (req, res) => {
+      try {
+        const { status } = req.query;
+        const filter = status ? { status } : {}; // Filter by status if provided
+        const cursor = reviewsCollection.find(filter);
+        const result = await cursor.toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: 'Error fetching all reviews' });
+      }
+    });
+
+    //       Update review status (Admin only - approve/reject)
+    app.patch('/reviews/:id/status', verifyFireBaseToken, verifyAdmin, async (req, res) => {
+      const { id } = req.params;
+      const { status } = req.body;
+      const { ObjectId } = require('mongodb');
+
+      if (!['approved', 'rejected', 'pending'].includes(status)) {
+        return res
+          .status(400)
+          .send({ message: 'Invalid status. Must be approved, rejected, or pending' });
+      }
+
+      try {
+        const result = await reviewsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: status, updatedAt: new Date() } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: 'Review not found' });
+        }
+
+        res.send({ message: `Review ${status} successfully`, modifiedCount: result.modifiedCount });
+      } catch (error) {
+        res.status(400).send({ message: 'Invalid request' });
       }
     });
 
@@ -214,7 +371,7 @@ async function run() {
       }
     });
 
-    //       Delete review (only by owner)
+    //       Delete review (by owner or admin)
     app.delete('/reviews/:id', verifyFireBaseToken, async (req, res) => {
       const { id } = req.params;
       const { ObjectId } = require('mongodb');
@@ -227,7 +384,12 @@ async function run() {
           return res.status(404).send({ message: 'Review not found' });
         }
 
-        if (review.userEmail !== userEmail) {
+        // Check if user is admin
+        const user = await usersCollection.findOne({ email: userEmail });
+        const isAdmin = user && user.role === 'admin';
+
+        // Allow deletion if user is the owner OR if user is admin
+        if (review.userEmail !== userEmail && !isAdmin) {
           return res.status(403).send({ message: 'You can only delete your own reviews' });
         }
 
