@@ -216,6 +216,52 @@ async function run() {
       }
     });
 
+    //       Delete user (Admin only)
+    app.delete('/users/:id', verifyFireBaseToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const { ObjectId } = require('mongodb');
+
+      try {
+        const query = { _id: new ObjectId(id) };
+        const user = await usersCollection.findOne(query);
+
+        if (!user) {
+          return res.status(404).send({ message: 'User not found' });
+        }
+
+        // Prevent admin from deleting themselves
+        if (user.email === req.token_email) {
+          return res.status(403).send({ message: 'You cannot delete your own account' });
+        }
+
+        // Delete from Firebase
+        try {
+          const userRecord = await admin.auth().getUserByEmail(user.email);
+          await admin.auth().deleteUser(userRecord.uid);
+          console.log(`Successfully deleted user from Firebase: ${user.email}`);
+        } catch (firebaseError) {
+          console.error('Error deleting user from Firebase:', firebaseError);
+          // Continue to delete from MongoDB even if Firebase deletion fails (e.g., user not found in Firebase)
+        }
+
+        // Delete user's reviews
+        const deleteReviewsResult = await reviewsCollection.deleteMany({ userEmail: user.email });
+        console.log(`Deleted ${deleteReviewsResult.deletedCount} reviews for user ${user.email}`);
+
+        // Delete from MongoDB
+        const result = await usersCollection.deleteOne(query);
+        
+        // Return combined result
+        res.send({ 
+          ...result, 
+          deletedReviews: deleteReviewsResult.deletedCount 
+        });
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        res.status(500).send({ message: 'Error deleting user' });
+      }
+    });
+
     //Reviews Related APIs -----------------------------------
 
     //       Create
